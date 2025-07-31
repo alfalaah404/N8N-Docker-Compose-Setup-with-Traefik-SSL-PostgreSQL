@@ -36,6 +36,27 @@ services:
       - traefik_letsencrypt:/letsencrypt
     networks:
       - traefik
+    # Hapus depends_on untuk menghindari circular dependency
+
+  postgres:
+    image: postgres:15
+    container_name: n8n_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - traefik
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   n8n:
     image: n8nio/n8n:latest
@@ -68,46 +89,26 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
-      - n8n
       - traefik
     depends_on:
       postgres:
         condition: service_healthy
-      traefik:
-        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5678/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
+      interval: 30s
+      timeout: 10s
       retries: 5
+      start_period: 60s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.n8n.rule=Host(`${DOMAIN}`)"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
-
-  postgres:
-    image: postgres:15
-    container_name: n8n_postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - n8n
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    # Optional: Expose postgres port for external access (hapus jika tidak diperlukan)
-    # ports:
-    #   - "127.0.0.1:5432:5432"
+      # Tambahan untuk mengatasi timeout
+      - "traefik.http.services.n8n.loadbalancer.healthcheck.path=/healthz"
+      - "traefik.http.services.n8n.loadbalancer.healthcheck.interval=30s"
+      - "traefik.http.services.n8n.loadbalancer.healthcheck.timeout=10s"
 
 volumes:
   n8n_data:
@@ -118,8 +119,6 @@ volumes:
     driver: local
 
 networks:
-  n8n:
-    driver: bridge
   traefik:
     driver: bridge
-    name: traefik  # Explicit network name
+    name: traefik
